@@ -12,15 +12,14 @@ import time
 ENSEMBL_REST_37 = "https://grch37.rest.ensembl.org/variation/human/{}?content-type=application/json"
 ENSEMBL_REST_38 = "https://rest.ensembl.org/variation/human/{}?content-type=application/json"
 
-input_file = "alleles.csv"
+input_file = "snps.txt"
 
 output_file = "rsid_positions.csv"
 
 rsids = []
 with open(input_file) as f:
-    reader = csv.DictReader(f)
-    for row in reader:
-        rsid = row["SNP"].strip()
+    for line in f:
+        rsid = line.strip()
         if rsid:
             rsids.append(rsid)
 
