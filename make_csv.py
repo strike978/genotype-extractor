@@ -41,21 +41,36 @@ def collect_all_snps(files):
 
 
 def get_1000g_group_full_mapping():
-    # Build mapping from group code to group_full using merged_genotypes.csv
-    mapping = {}
-    merged_path = os.path.join(WORKDIR, "merged_genotypes.csv")
-    if not os.path.exists(merged_path):
-        return mapping
-    with open(merged_path) as f:
-        reader = csv.reader(f)
-        next(reader)  # skip header
-        for row in reader:
-            if row[0] == "1000g":
-                code = row[1]
-                full = row[2]
-                if code not in mapping:
-                    mapping[code] = full
-    return mapping
+    # Hardcoded mapping from 1000g group code to group_full, extracted from merged_genotypes.csv
+    return {
+        'ACB': 'African Caribbean in Barbados',
+        'ASW': 'African Ancestry in Southwest US',
+        'BEB': 'Bengali in Bangladesh',
+        'CDX': 'Chinese Dai in Xishuangbanna, China',
+        'CEU': 'Utah Residents (CEPH) with Northern and Western European Ancestry',
+        'CHB': 'Han Chinese in Beijing, China',
+        'CHS': 'Southern Han Chinese',
+        'CLM': 'Colombian in Medellin, Colombia',
+        'ESN': 'Esan in Nigeria',
+        'FIN': 'Finnish in Finland',
+        'GBR': 'British in England and Scotland',
+        'GIH': 'Gujarati Indian in Houston, TX',
+        'GWD': 'Gambian in Western Divisions in the Gambia',
+        'IBS': 'Iberian Population in Spain',
+        'ITU': 'Indian Telugu in the UK',
+        'JPT': 'Japanese in Tokyo, Japan',
+        'KHV': 'Kinh in Ho Chi Minh City, Vietnam',
+        'LWK': 'Luhya in Webuye, Kenya',
+        'MSL': 'Mende in Sierra Leone',
+        'MXL': 'Mexican Ancestry in Los Angeles, CA',
+        'PEL': 'Peruvian in Lima, Peru',
+        'PJL': 'Punjabi in Lahore, Pakistan',
+        'PUR': 'Puerto Rican in Puerto Rico',
+        'STU': 'Sri Lankan Tamil in the UK',
+        'TSI': 'Toscani in Italia',
+        'YRI': 'Yoruba in Ibadan, Nigeria',
+        # Add more mappings as needed from merged_genotypes.csv
+    }
 
 
 def parse_sample_file(fpath):
@@ -99,7 +114,8 @@ def main():
                 "HGDP" if folder == "hgdp" else "SGDP"))
             group = pop
             if folder == "1000genomes":
-                group_full = group_full_map.get(pop, f"{pop}")
+                # Only use group_full from merged_genotypes.csv mapping; if not found, leave blank
+                group_full = group_full_map.get(pop, "")
             else:
                 group_full = pop  # Could be improved with metadata if needed
             individual, snp_dict = parse_sample_file(fpath)
