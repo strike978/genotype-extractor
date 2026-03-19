@@ -103,7 +103,7 @@ def main():
     print(f"Total unique SNPs: {len(all_snps)}")
     group_full_map = get_1000g_group_full_mapping()
 
-    out_path = os.path.join(WORKDIR, "113.csv")
+    out_path = os.path.join(WORKDIR, "genotypes.csv")
     with open(out_path, "w", newline="") as out_f:
         writer = csv.writer(out_f)
         header = ["source", "group", "group_full", "individual"] + all_snps
