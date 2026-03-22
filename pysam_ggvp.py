@@ -41,6 +41,7 @@ def collect_all_snp_data(snps_by_chrom, snp_info):
     print("[INFO] Collecting all SNP data from GGVP...")
 
     all_sample_data = defaultdict(list)
+    missing_snps = []
 
     for idx, (chrom, positions) in enumerate(snps_by_chrom.items(), 1):
         print(
@@ -58,10 +59,17 @@ def collect_all_snp_data(snps_by_chrom, snp_info):
             print(f"[ERROR] Could not open VCF for chr{chrom}: {e}")
             continue
 
+        # Print VCF sample names for debugging
+        vcf_samples = list(vcf.header.samples)
+        print(
+            f"    [DEBUG] VCF samples (first 10): {vcf_samples[:10]} ... total {len(vcf_samples)}")
+
         for pos_idx, pos in enumerate(positions, 1):
             print(
                 f"      [PROGRESS] Fetching variant {pos_idx}/{len(positions)} at {chrom}:{pos}")
+            found_variant = False
             for record in vcf.fetch(chrom, int(pos)-1, int(pos)):
+                found_variant = True
                 chrom_col = record.chrom
                 pos_col = str(record.pos)
                 id_col = record.id
@@ -104,11 +112,19 @@ def collect_all_snp_data(snps_by_chrom, snp_info):
                         if sample_idx % 500 == 0:
                             print(
                                 f"          [PROGRESS] {sample_idx} samples processed for variant {current_variant['rsid']}")
+            if not found_variant:
+                print(
+                    f"      [DEBUG] No variant found at {chrom}:{pos} in VCF.")
+                # Track missing SNPs by rsID and position
+                for key, val in snp_info.items():
+                    if key == (chrom, pos):
+                        missing_snps.append(
+                            {'rsid': val['rsID'], 'chrom': chrom, 'pos': pos})
 
         vcf.close()
         print(f"    [INFO] Chromosome {chrom} processed.")
 
-    return all_sample_data, []
+    return all_sample_data, missing_snps
 
 
 def write_sample_files(sample_data, meta_file):
@@ -117,70 +133,100 @@ def write_sample_files(sample_data, meta_file):
 
     # Load population data from GGVP metadata
     pop_info = {}
+    # First, find the header line
     with open(meta_file) as f:
-        header = f.readline().strip().split('\t')
         for line in f:
-            if line.strip():
-                parts = line.strip().split('\t')
-                entry = dict(zip(header, parts))
-                sample_id = entry.get('SAMPLE_NAME', entry.get('sample', ''))
-                pop = entry.get('POPULATION', entry.get('pop', ''))
-                superpop = entry.get('REGION', entry.get('super_pop', ''))
-                # GGVP may have different or missing columns; adjust as needed
-                coord = entry.get('COORDINATES', entry.get('coordinates', ''))
-                datasource = entry.get(
-                    'DATA_SOURCE', entry.get('data_source', ''))
-                pop_info[sample_id] = {
-                    'pop': pop, 'superpop': superpop, 'coord': coord, 'datasource': datasource}
+            if line.startswith('#') and not line.startswith('##'):
+                header = line.lstrip('#').strip().split('\t')
+                break
+        else:
+            raise ValueError('No header line found in metadata file')
+    # Now, parse the data lines
+    sample_name_prefixes = []
+    with open(meta_file) as f:
+        header_found = False
+        for line in f:
+            if not header_found:
+                if line.startswith('#') and not line.startswith('##'):
+                    header_found = True
+                continue
+            if not line.strip() or line.startswith('#'):
+                continue
+            parts = line.strip().split('\t')
+            entry = dict(zip(header, parts))
+            sample_name_full = entry.get('SAMPLE_NAME', '')
+            sample_name_prefix = sample_name_full.split(
+                '-')[0] if '-' in sample_name_full else sample_name_full
+            pop = entry.get('POPULATION', '')
+            sample_id = entry.get('SAMPLE_ID', '')
+            pop_info[sample_name_prefix] = {
+                'pop': pop,
+                'sample_id': sample_id,
+                'full_sample_name': sample_name_full
+            }
+            sample_name_prefixes.append(sample_name_prefix)
+    print(
+        f"[DEBUG] First 10 parsed sample_name_prefixes from metadata: {sample_name_prefixes[:10]}")
 
-    # Create output directory structure
-    output_dir = "1000genomes"
+    # Create output directory structure for GGVP
+    output_dir = "ggvp"
     if not os.path.exists(output_dir):
         os.makedirs(output_dir)
 
-    # Group samples by population
+    # Print GGVP-like sample names from VCF and metadata for debugging
+    vcf_samples = set(sample_data.keys())
+    vcf_ggvp = sorted(
+        [s for s in vcf_samples if s.startswith('SC_') or s.startswith('GM_')])
+    meta_ggvp = sorted(
+        [s for s in pop_info.keys() if s.startswith('SC_') or s.startswith('GM_')])
+    intersection = sorted(set(vcf_ggvp) & set(meta_ggvp))
+    print(f"[DEBUG] GGVP-like samples in VCF: {vcf_ggvp}")
+    print(f"[DEBUG] GGVP-like samples in metadata: {meta_ggvp}")
+    print(f"[DEBUG] Intersection (should be written): {intersection}")
+
+    # Only keep samples present in both VCF and GGVP metadata
+    ggvp_samples = [s for s in vcf_ggvp if s in pop_info]
+    print(
+        f"[INFO] Found {len(ggvp_samples)} GGVP samples present in both VCF and metadata.")
+
+    # Group GGVP samples by population
     samples_by_pop = defaultdict(list)
-    for sample_id in sample_data.keys():
-        if sample_id in pop_info:
-            pop = pop_info[sample_id]['pop']
-            samples_by_pop[pop].append(sample_id)
+    for sample_name in ggvp_samples:
+        pop = pop_info[sample_name]['pop']
+        samples_by_pop[pop].append(sample_name)
 
     # Write files
-    for pop, sample_ids in samples_by_pop.items():
+    for pop, sample_names in samples_by_pop.items():
         pop_dir = os.path.join(output_dir, pop)
         if not os.path.exists(pop_dir):
             os.makedirs(pop_dir)
 
         print(
-            f"    [INFO] Writing {len(sample_ids)} samples for population {pop}...")
+            f"    [INFO] Writing {len(sample_names)} samples for population {pop}...")
 
-        for idx, sample_id in enumerate(sample_ids, 1):
-            sample_file = os.path.join(pop_dir, f"{sample_id}.txt")
+        for idx, sample_name in enumerate(sample_names, 1):
+            sample_file = os.path.join(pop_dir, f"{sample_name}.txt")
             with open(sample_file, 'w') as f:
                 # Write sample details at the top
-                pop = pop_info.get(sample_id, {}).get('pop', '')
-                superpop = pop_info.get(sample_id, {}).get('superpop', '')
-                coord = pop_info.get(sample_id, {}).get('coord', '')
-                datasource = pop_info.get(sample_id, {}).get('datasource', '')
-                f.write(f"# Sample : {sample_id}\n")
-                f.write(f"# Population : {pop}\n")
-                f.write(f"# Region : {superpop}\n")
-                f.write(f"# Coordinates : {coord if coord else '-'}\n")
-                f.write(
-                    f"# Data source : {datasource if datasource else '-'}\n")
+                pop_val = pop_info.get(sample_name, {}).get('pop', '')
+                sample_id_val = pop_info.get(
+                    sample_name, {}).get('sample_id', '')
+                f.write(f"# Sample : {sample_name}\n")
+                f.write(f"# Sample_ID : {sample_id_val}\n")
+                f.write(f"# Population : {pop_val}\n")
                 # Write header
                 f.write("# rsid\tchromosome\tposition\tgenotype\n")
 
                 # Sort SNPs by chromosome and position
-                snp_data = sorted(sample_data[sample_id], key=lambda x: (
+                snp_data = sorted(sample_data[sample_name], key=lambda x: (
                     int(x[1]) if x[1].isdigit() else 999, int(x[2])))
 
                 # Write SNP data
                 for rsid, chrom, pos, genotype in snp_data:
                     f.write(f"{rsid}\t{chrom}\t{pos}\t{genotype}\n")
-            if idx % 100 == 0 or idx == len(sample_ids):
+            if idx % 100 == 0 or idx == len(sample_names):
                 print(
-                    f"      [PROGRESS] {idx}/{len(sample_ids)} samples written for population {pop}")
+                    f"      [PROGRESS] {idx}/{len(sample_names)} samples written for population {pop}")
 
     print(
         f"[INFO] Individual sample files written to {output_dir}/ organized by population")
@@ -228,11 +274,21 @@ def main():
         f"[INFO] Loaded {len(snp_info)} SNPs across {len(snps_by_chrom)} chromosomes")
 
     # Collect all SNP data organized by sample
-    all_sample_data, tempfiles = collect_all_snp_data(snps_by_chrom, snp_info)
+    all_sample_data, missing_snps = collect_all_snp_data(
+        snps_by_chrom, snp_info)
     print(f"[INFO] Collected data for {len(all_sample_data)} samples")
 
     # Write individual sample files organized by population
     output_dir = write_sample_files(all_sample_data, GGVP_META_FILE)
+
+    # Report missing SNPs at the end
+    if missing_snps:
+        print(
+            f"\n[REPORT] {len(missing_snps)} SNPs from merged_snps.csv were not found in the GGVP VCFs:")
+        for snp in missing_snps:
+            print(f"  - {snp['rsid']} (chr{snp['chrom']}:{snp['pos']})")
+    else:
+        print("\n[REPORT] All SNPs from merged_snps.csv were found in the GGVP VCFs.")
 
     print(f"\n[INFO] Done! Individual sample files written to {output_dir}/")
     print(f"[INFO] Each population folder contains individual sample files in 23andMe format.")
