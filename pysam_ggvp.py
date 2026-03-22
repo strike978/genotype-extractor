@@ -1,0 +1,242 @@
+#!/usr/bin/env python3
+from collections import defaultdict
+import csv
+import os
+import pysam
+import urllib.request
+
+
+# GGVP metadata and VCFs
+GGVP_META_URL = "https://ftp.1000genomes.ebi.ac.uk/vol1/ftp/data_collections/gambian_genome_variation_project/gambian_genome_variation_project.sequence.index"
+GGVP_META_FILE = "gambian_genome_variation_project.sequence.index"
+
+# Map chromosome number to GGVP VCF URL
+GGVP_VCF_URLS = {
+    str(i): f"https://ftp.1000genomes.ebi.ac.uk/vol1/ftp/data_collections/gambian_genome_variation_project/release/20200217_biallelic_SNV/ALL_GGVP.chr{i}.shapeit2_integrated_snvindels_v1b_20200120.GRCh38.phased.vcf.gz"
+    for i in list(range(1, 23))
+}
+GGVP_VCF_URLS["X"] = "https://ftp.1000genomes.ebi.ac.uk/vol1/ftp/data_collections/gambian_genome_variation_project/release/20200217_biallelic_SNV/ALL_GGVP.chrX.shapeit2_integrated_snvindels_v1b_20200120.GRCh38.phased.vcf.gz"
+
+ALLELES_CSV = "merged_snps.csv"
+
+# Download panel file if not exists
+
+
+def download_file(url, filename):
+    if not os.path.isfile(filename):
+        print(f"[INFO] Downloading {filename} from {url} ...")
+        try:
+            urllib.request.urlretrieve(url, filename)
+            print(f"[INFO] Downloaded {filename}.")
+        except Exception as e:
+            print(f"[ERROR] Failed to download {filename}: {e}")
+    else:
+        print(f"[INFO] {filename} already exists. Skipping download.")
+
+# Download VCF and index if not exists
+
+
+def collect_all_snp_data(snps_by_chrom, snp_info):
+    """Collect all SNP data across chromosomes and organize by sample (GGVP)"""
+    print("[INFO] Collecting all SNP data from GGVP...")
+
+    all_sample_data = defaultdict(list)
+
+    for idx, (chrom, positions) in enumerate(snps_by_chrom.items(), 1):
+        print(
+            f"\n[INFO] Processing chromosome {chrom} ({idx}/{len(snps_by_chrom)}) with {len(positions)} SNPs...")
+
+        vcf_url = GGVP_VCF_URLS.get(chrom)
+        if not vcf_url:
+            print(f"[WARNING] No VCF URL for chromosome {chrom}. Skipping.")
+            continue
+        print(
+            f"    [INFO] Fetching data for chr{chrom} from remote GGVP VCF...")
+        try:
+            vcf = pysam.VariantFile(vcf_url)
+        except Exception as e:
+            print(f"[ERROR] Could not open VCF for chr{chrom}: {e}")
+            continue
+
+        for pos_idx, pos in enumerate(positions, 1):
+            print(
+                f"      [PROGRESS] Fetching variant {pos_idx}/{len(positions)} at {chrom}:{pos}")
+            for record in vcf.fetch(chrom, int(pos)-1, int(pos)):
+                chrom_col = record.chrom
+                pos_col = str(record.pos)
+                id_col = record.id
+                ref = record.ref
+                alt = record.alts[0] if record.alts else ''
+
+                key = (chrom_col, pos_col)
+                if key in snp_info:
+                    current_variant = {
+                        'rsid': snp_info[key]['rsID'],
+                        'chrom': snp_info[key]['chrom'],
+                        'pos': snp_info[key]['pos'],
+                        'ref': ref,
+                        'alt': alt
+                    }
+                    print(
+                        f"        [PROGRESS] Variant {current_variant['rsid']} at {chrom_col}:{pos_col}")
+
+                    for sample_idx, sample in enumerate(record.samples, 1):
+                        gt = record.samples[sample].get('GT')
+                        if gt is None or None in gt:
+                            genotype = '--'
+                        else:
+                            gt0, gt1 = gt
+                            if gt0 == 0 and gt1 == 0:
+                                genotype = ref + ref
+                            elif gt0 == 1 and gt1 == 1:
+                                genotype = alt + alt
+                            elif (gt0 == 0 and gt1 == 1) or (gt0 == 1 and gt1 == 0):
+                                genotype = ref + alt
+                            else:
+                                genotype = '--'
+
+                        all_sample_data[sample].append((
+                            current_variant['rsid'],
+                            current_variant['chrom'],
+                            current_variant['pos'],
+                            genotype
+                        ))
+                        if sample_idx % 500 == 0:
+                            print(
+                                f"          [PROGRESS] {sample_idx} samples processed for variant {current_variant['rsid']}")
+
+        vcf.close()
+        print(f"    [INFO] Chromosome {chrom} processed.")
+
+    return all_sample_data, []
+
+
+def write_sample_files(sample_data, meta_file):
+    """Write individual sample files organized by population (GGVP)"""
+    print("[INFO] Writing individual sample files...")
+
+    # Load population data from GGVP metadata
+    pop_info = {}
+    with open(meta_file) as f:
+        header = f.readline().strip().split('\t')
+        for line in f:
+            if line.strip():
+                parts = line.strip().split('\t')
+                entry = dict(zip(header, parts))
+                sample_id = entry.get('SAMPLE_NAME', entry.get('sample', ''))
+                pop = entry.get('POPULATION', entry.get('pop', ''))
+                superpop = entry.get('REGION', entry.get('super_pop', ''))
+                # GGVP may have different or missing columns; adjust as needed
+                coord = entry.get('COORDINATES', entry.get('coordinates', ''))
+                datasource = entry.get(
+                    'DATA_SOURCE', entry.get('data_source', ''))
+                pop_info[sample_id] = {
+                    'pop': pop, 'superpop': superpop, 'coord': coord, 'datasource': datasource}
+
+    # Create output directory structure
+    output_dir = "1000genomes"
+    if not os.path.exists(output_dir):
+        os.makedirs(output_dir)
+
+    # Group samples by population
+    samples_by_pop = defaultdict(list)
+    for sample_id in sample_data.keys():
+        if sample_id in pop_info:
+            pop = pop_info[sample_id]['pop']
+            samples_by_pop[pop].append(sample_id)
+
+    # Write files
+    for pop, sample_ids in samples_by_pop.items():
+        pop_dir = os.path.join(output_dir, pop)
+        if not os.path.exists(pop_dir):
+            os.makedirs(pop_dir)
+
+        print(
+            f"    [INFO] Writing {len(sample_ids)} samples for population {pop}...")
+
+        for idx, sample_id in enumerate(sample_ids, 1):
+            sample_file = os.path.join(pop_dir, f"{sample_id}.txt")
+            with open(sample_file, 'w') as f:
+                # Write sample details at the top
+                pop = pop_info.get(sample_id, {}).get('pop', '')
+                superpop = pop_info.get(sample_id, {}).get('superpop', '')
+                coord = pop_info.get(sample_id, {}).get('coord', '')
+                datasource = pop_info.get(sample_id, {}).get('datasource', '')
+                f.write(f"# Sample : {sample_id}\n")
+                f.write(f"# Population : {pop}\n")
+                f.write(f"# Region : {superpop}\n")
+                f.write(f"# Coordinates : {coord if coord else '-'}\n")
+                f.write(
+                    f"# Data source : {datasource if datasource else '-'}\n")
+                # Write header
+                f.write("# rsid\tchromosome\tposition\tgenotype\n")
+
+                # Sort SNPs by chromosome and position
+                snp_data = sorted(sample_data[sample_id], key=lambda x: (
+                    int(x[1]) if x[1].isdigit() else 999, int(x[2])))
+
+                # Write SNP data
+                for rsid, chrom, pos, genotype in snp_data:
+                    f.write(f"{rsid}\t{chrom}\t{pos}\t{genotype}\n")
+            if idx % 100 == 0 or idx == len(sample_ids):
+                print(
+                    f"      [PROGRESS] {idx}/{len(sample_ids)} samples written for population {pop}")
+
+    print(
+        f"[INFO] Individual sample files written to {output_dir}/ organized by population")
+    return output_dir
+
+
+def main():
+    print("[INFO] Script started. Creating individual sample files like 23andMe format (GGVP).")
+    print("[INFO] Downloading GGVP metadata file if needed...")
+    download_file(GGVP_META_URL, GGVP_META_FILE)
+
+    print(
+        f"[INFO] Reading SNP list from {ALLELES_CSV} and grouping by chromosome...")
+    snps_by_chrom = defaultdict(list)
+    snp_info = {}
+
+    # Detect which columns to use for chromosome and position (chr37 or chr38)
+    with open(ALLELES_CSV, 'r') as f:
+        reader = csv.DictReader(f)
+        header = reader.fieldnames
+        if 'chr38' in header and 'pos38' in header:
+            chrom_col = 'chr38'
+            pos_col = 'pos38'
+            print("[INFO] Detected chr38/pos38 columns. Using GRCh38 coordinates.")
+        elif 'chr37' in header and 'pos37' in header:
+            chrom_col = 'chr37'
+            pos_col = 'pos37'
+            print("[INFO] Detected chr37/pos37 columns. Using GRCh37 coordinates.")
+        else:
+            raise ValueError(
+                "Could not detect chr37/chr38 columns in the CSV header.")
+
+        for row in reader:
+            rsid = row['rsID']
+            chrom = str(row[chrom_col])
+            pos = str(row[pos_col])
+            snps_by_chrom[chrom].append(pos)
+            snp_info[(chrom, pos)] = {
+                'rsID': rsid,
+                'chrom': chrom,
+                'pos': pos
+            }
+
+    print(
+        f"[INFO] Loaded {len(snp_info)} SNPs across {len(snps_by_chrom)} chromosomes")
+
+    # Collect all SNP data organized by sample
+    all_sample_data, tempfiles = collect_all_snp_data(snps_by_chrom, snp_info)
+    print(f"[INFO] Collected data for {len(all_sample_data)} samples")
+
+    # Write individual sample files organized by population
+    output_dir = write_sample_files(all_sample_data, GGVP_META_FILE)
+
+    print(f"\n[INFO] Done! Individual sample files written to {output_dir}/")
+    print(f"[INFO] Each population folder contains individual sample files in 23andMe format.")
+
+
+if __name__ == "__main__":
+    main()
