@@ -7,7 +7,7 @@ import os
 import csv
 from collections import defaultdict
 
-DATA_FOLDERS = ["1000genomes", "hgdp", "sgdp"]
+DATA_FOLDERS = ["1000genomes", "hgdp", "sgdp", "ggvp"]
 WORKDIR = os.path.dirname(os.path.abspath(__file__))
 
 
@@ -73,6 +73,12 @@ def get_1000g_group_full_mapping():
     }
 
 
+def get_ggvp_group_full_mapping():
+    # Optionally, add mappings for GGVP populations if you want a more descriptive group_full
+    # For now, just return an empty dict (can be filled in as needed)
+    return {}
+
+
 def parse_sample_file(fpath):
     # Returns: (individual_id, {snp: genotype})
     snp_dict = {}
@@ -109,15 +115,28 @@ def main():
         header = ["source", "group", "group_full", "individual"] + all_snps
         writer.writerow(header)
 
+        ggvp_group_full_map = get_ggvp_group_full_mapping()
         for folder, pop, fpath in files:
-            source = ("1000g" if folder == "1000genomes" else (
-                "HGDP" if folder == "hgdp" else "SGDP"))
-            group = pop
             if folder == "1000genomes":
-                # Only use group_full from merged_genotypes.csv mapping; if not found, leave blank
+                source = "1000g"
+                group = pop
                 group_full = group_full_map.get(pop, "")
+            elif folder == "hgdp":
+                source = "HGDP"
+                group = pop
+                group_full = pop
+            elif folder == "sgdp":
+                source = "SGDP"
+                group = pop
+                group_full = pop
+            elif folder == "ggvp":
+                source = "GGVP"
+                group = pop
+                group_full = ggvp_group_full_map.get(pop, pop)
             else:
-                group_full = pop  # Could be improved with metadata if needed
+                source = folder
+                group = pop
+                group_full = pop
             individual, snp_dict = parse_sample_file(fpath)
             row = [source, group, group_full, individual]
             for snp in all_snps:
