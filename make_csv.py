@@ -7,7 +7,8 @@ import os
 import csv
 from collections import defaultdict
 
-DATA_FOLDERS = ["1000genomes", "hgdp", "sgdp", "ggvp"]
+# DATA_FOLDERS = ["1000genomes", "hgdp", "sgdp", "ggvp"]
+DATA_FOLDERS = ["1000genomes", "hgdp", "sgdp"]
 WORKDIR = os.path.dirname(os.path.abspath(__file__))
 
 
@@ -129,10 +130,10 @@ def main():
                 source = "SGDP"
                 group = pop
                 group_full = pop
-            elif folder == "ggvp":
-                source = "GGVP"
-                group = pop
-                group_full = ggvp_group_full_map.get(pop, pop)
+            # elif folder == "ggvp":
+            #     source = "GGVP"
+            #     group = pop
+            #     group_full = ggvp_group_full_map.get(pop, pop)
             else:
                 source = folder
                 group = pop
