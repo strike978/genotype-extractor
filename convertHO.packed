@@ -1,0 +1,9 @@
+genotypename:    v66.HO.aadr.PUB.geno
+snpname:         v66.HO.aadr.PUB.snp
+indivname:       v66.HO.aadr.PUB.ind
+
+outputformat:    PACKEDANCESTRYMAP
+
+genotypeoutname: v66.HO.aadr.PUB.pack.geno
+snpoutname:      v66.HO.aadr.PUB.pack.snp
+indivoutname:    v66.HO.aadr.PUB.pack.ind

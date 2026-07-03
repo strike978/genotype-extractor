@@ -1,0 +1,7 @@
+genotypename:    v66.2M.aadr.PUB.geno
+snpname:         v66.2M.aadr.PUB.snp
+indivname:       v66.2M.aadr.PUB.ind
+outputformat:    PACKEDPED
+genotypeoutname: v66.2M.aadr.PUB.bed
+snpoutname:      v66.2M.aadr.PUB.bim
+indivoutname:    v66.2M.aadr.PUB.fam

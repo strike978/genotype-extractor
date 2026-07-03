@@ -1,0 +1,7 @@
+genotypename:    v66.HO.aadr.PUB.geno
+snpname:         v66.HO.aadr.PUB.snp
+indivname:       v66.HO.aadr.PUB.ind
+outputformat:    PACKEDPED
+genotypeoutname: v66.HO.aadr.PUB.bed
+snpoutname:      v66.HO.aadr.PUB.bim
+indivoutname:    v66.HO.aadr.PUB.fam

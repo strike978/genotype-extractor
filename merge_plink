@@ -1,0 +1,2 @@
+./plink --bfile v66.1240k.aadr.PUB --bmerge v66.HO.aadr.PUB.bed v66.HO.aadr.PUB.bim v66.HO.aadr.PUB.fam --allow-no-sex --make-bed --out combined_1240k_HO
+
